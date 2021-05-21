@@ -104,7 +104,7 @@ if __name__ == '__main__':
     records = list()
 
     while len( frontier ) > 0:
-        if len(records) > 1000000:
+        if len(records) > 1000:
             insert_data( records )
 
         hashtag = frontier.pop( 0 )
