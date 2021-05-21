@@ -31,7 +31,7 @@ def collect_data( api : tweepy.API, query : str, frontier : list, visited_hashta
         print('sleep')
         time.sleep( rate_limit['reset'] - time.time() )
         rate_limit = get_rate_limt( api )
-        remaining = rate_limit['limit']
+        remaining = rate_limit['remaining']
 
     records = list()
 
