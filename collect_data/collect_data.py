@@ -6,7 +6,6 @@ import random
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from itertools import cycle
-from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv( '../env/mongo_auth.env' )
 
@@ -68,7 +67,10 @@ def collect_data( api : tweepy.API, query : str, frontier : list, visited_hashta
 
         count += len(search_result)
 
-    return records, len(records) / count
+    if count == 0:
+        return records, 1
+    else:
+        return records, len(records) / count
 
 def insert_data( records : list ) -> None:
     client = MongoClient(
