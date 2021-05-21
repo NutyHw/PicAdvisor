@@ -6,6 +6,7 @@ import random
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from itertools import cycle
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv( '../env/mongo_auth.env' )
 
@@ -22,6 +23,30 @@ def get_rate_limt( api : tweepy.API ) -> dict:
     rate_limit = api.rate_limit_status( 'search' )
     return rate_limit['resources']['search']['/search/tweets']
 
+def process_search_result( search_result : list ):
+    records = list()
+    for tweet in search_result:
+        if tweet.id in visited_ids or 'media' not in tweet.entities.keys():
+            continue
+
+        record = {
+            'id' : tweet.id,
+            'text' : tweet.text,
+            'retweet_count' : tweet.retweet_count,
+            'favorite_count' : tweet.favorite_count,
+            'hashtags' : [ hashtag['text'] for hashtag in tweet.entities['hashtags'] ],
+            'image_urls' : [ media['media_url'] for media in tweet.entities['media']  if media['type'] == 'photo' ]
+        } 
+
+
+        for hashtag in record['hashtags']:
+            if hashtag not in visited_hashtags and hashtag not in irr_hashtags and hashtag not in frontier:
+                frontier.append( hashtag )
+
+        records.append( record )
+
+    return records
+
 def collect_data( api : tweepy.API, query : str, frontier : list, visited_hashtags : set, visited_ids : set, irr_hashtags : set ) -> tuple:
 
     rate_limit = get_rate_limt( api )
@@ -30,6 +55,7 @@ def collect_data( api : tweepy.API, query : str, frontier : list, visited_hashta
     if rate_limit['remaining'] == 0:
         print('sleep')
         time.sleep( rate_limit['reset'] - time.time() )
+        rate_limit = get_rate_limt( api )
         remaining = rate_limit['limit']
 
     records = list()
@@ -44,29 +70,6 @@ def collect_data( api : tweepy.API, query : str, frontier : list, visited_hashta
             break
 
         count += len(search_result)
-
-        for tweet in search_result:
-            if tweet.id in visited_ids or 'media' not in tweet.entities.keys():
-                continue
-
-            record = {
-                'id' : tweet.id,
-                'text' : tweet.text,
-                'retweet_count' : tweet.retweet_count,
-                'favorite_count' : tweet.favorite_count,
-                'hashtags' : [ hashtag['text'] for hashtag in tweet.entities['hashtags'] ],
-                'image_urls' : [ media['media_url'] for media in tweet.entities['media']  if media['type'] == 'photo' ]
-            } 
-
-
-            for hashtag in record['hashtags']:
-                if hashtag not in visited_hashtags and hashtag not in irr_hashtags and hashtag not in frontier:
-                    frontier.append( hashtag )
-
-            records.append( record )
-
-            if record['id'] < max_id:
-                max_id = record['id']
 
     return records, len(records) / count
 
