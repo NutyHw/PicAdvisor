@@ -50,6 +50,7 @@ def process_result( hashtag : str, tweets : list, query_metadata : dict ) -> Non
     if len( tweets ) == 0:
         return 
 
+    relate_hashtags = set()
     if 'next_results' in query_metadata.keys():
         query = query_metadata['next_results'].strip('?') + '&tweet_mode=extended'
         frontier.append(query)
@@ -72,15 +73,14 @@ def process_result( hashtag : str, tweets : list, query_metadata : dict ) -> Non
 
         visited_ids.add( tweet['id'] )
 
-        for hashtag in record['hashtags']:
-            if hashtag not in visited_hashtags and build_query( hashtag ) not in frontier:
-                frontier.append( build_query( hashtag ) )
-
+        relate_hashtags = relate_hashtags.union( record['hashtags'] )
         valid_tweet_count += 1
 
     if valid_tweet_count / len( tweets ) >= threshold:
         rev_hashtags = rev_hashtags.union( [ hashtag ] )
-
+        for hashtag in relate_hashtags:
+            if hashtag not in visited_hashtags:
+                frontier.append( build_query( hashtag ) )
 
 def load_app() -> dict :
     '''
@@ -143,7 +143,7 @@ if __name__ == '__main__':
     end_time = time.time() + ( operate_hours * 60 * 60 )
 
     while len( frontier ) > 0 and time.time() < end_time:
-        if len(records) > 1000:
+        if len(records) > 1e5:
             insert_data()
 
         raw_query = frontier.pop( 0 )
