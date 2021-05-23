@@ -1,78 +1,111 @@
 import os 
 import json 
-import tweepy 
-import time
-import random
+import re
+import twitter
+
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from itertools import cycle
+import time
 
 load_dotenv( '../env/mongo_auth.env' )
 
-def load_app() -> dict:
+frontier = []
+visited_hashtags = set()
+visited_ids = set()
+rev_hashtags = set()
+records = list()
+
+def build_query( hashtag : str ):
+    '''
+    building start query from given hashtags
+
+    parameter:
+    hashtag : hashtag str to build query
+    '''
+    return f'q=%23{ hashtag }&lang=th&count=100&include_entities=1&result_type=mixed&tweet_mode=extended'
+
+def get_hashtag( raw_query : str ) -> str:
+    return re.search( r'q=%23(.+?)&', raw_query ).group(1)
+
+def process_result( hashtag : str, tweets : list, query_metadata : dict ) -> None:
+    '''
+    process_result
+
+    parameter:
+    tweet : dictionary of tweet object return from search tweet
+    '''
+
+    global frontier
+    global visited_hashtags
+    global visited_ids
+    global rev_hashtags
+    global records
+
+    valid_tweet_count = 0
+    threshold = 0.05
+
+    visited_hashtags = visited_hashtags.union( [ hashtag ] )
+
+    if len( tweets ) == 0:
+        return 
+
+    if 'next_results' in query_metadata.keys():
+        query = query_metadata['next_results'].strip('?') + '&tweet_mode=extended'
+        frontier.append(query)
+
+    for tweet in tweets:
+        if tweet['id'] in visited_ids or 'media' not in tweet['entities'].keys():
+            continue
+
+        record = {
+            'id' : tweet['id'],
+            'created_at' : tweet['created_at'],
+            'text' : tweet['full_text'],
+            'retweet_count' : tweet['retweet_count'],
+            'favorite_count' : tweet['favorite_count'],
+            'hashtags' : [ hashtag['text'] for hashtag in tweet['entities']['hashtags'] ],
+            'image_urls' : [ media['media_url'] for media in tweet['entities']['media']  if media['type'] == 'photo' ]
+        } 
+
+        records.append( record )
+
+        visited_ids.add( tweet['id'] )
+
+        for hashtag in record['hashtags']:
+            if hashtag not in visited_hashtags and build_query( hashtag ) not in frontier:
+                frontier.append( build_query( hashtag ) )
+
+        valid_tweet_count += 1
+
+    if valid_tweet_count / len( tweets ) >= threshold:
+        rev_hashtags = rev_hashtags.union( [ hashtag ] )
+
+
+def load_app() -> dict :
+    '''
+    load twitter application information to use api
+    '''
     with open( '../env/twitter_app.json' ) as f:
         return json.load( f )
 
-def auth_app( consumer_key : str, consumer_secret : str, access_token : str, access_token_secret : str ) -> tweepy.API:
-    auth = tweepy.OAuthHandler( consumer_key, consumer_secret ) 
-    auth.set_access_token( access_token, access_token_secret )
-    return tweepy.API( auth )
+def auth_app( consumer_key : str, consumer_secret : str, access_token : str, access_token_secret : str ) -> twitter.Api:
+    return twitter.Api(
+        consumer_key=consumer_key,
+        consumer_secret=consumer_secret,
+        access_token_key=access_token,
+        access_token_secret=access_token_secret,
+        sleep_on_rate_limit=True
+    )
 
-def get_rate_limt( api : tweepy.API ) -> dict:
-    rate_limit = api.rate_limit_status( 'search' )
-    return rate_limit['resources']['search']['/search/tweets']
+def collect_data( api : twitter.Api, raw_query : str ):
+    print( raw_query )
+    search_result = api.GetSearch( raw_query= raw_query, return_json=True )
+    process_result( hashtag= get_hashtag( raw_query ), tweets= search_result['statuses'], query_metadata=search_result['search_metadata'] )
 
-def collect_data( api : tweepy.API, query : str, frontier : list, visited_hashtags : set, visited_ids : set, irr_hashtags : set ) -> tuple:
+def insert_data() -> None:
+    global records
 
-    rate_limit = get_rate_limt( api )
-    remaining = rate_limit['remaining']
-
-    if rate_limit['remaining'] == 0:
-        print('sleep')
-        time.sleep( rate_limit['reset'] - time.time() )
-        rate_limit = get_rate_limt( api )
-        remaining = rate_limit['limit']
-
-    records = list()
-
-    max_id = 1e25
-    count = 0
-
-    for i in range(remaining):
-        search_result = api.search( q = '#' + query, result = 'popular', lang = 'th', count = 100, max_id = max_id )
-
-        if len(search_result) == 0:
-            break
-
-        records = list()
-        for tweet in search_result:
-            if tweet.id in visited_ids or 'media' not in tweet.entities.keys():
-                continue
-
-            record = {
-                'id' : tweet.id,
-                'text' : tweet.text,
-                'retweet_count' : tweet.retweet_count,
-                'favorite_count' : tweet.favorite_count,
-                'hashtags' : [ hashtag['text'] for hashtag in tweet.entities['hashtags'] ],
-                'image_urls' : [ media['media_url'] for media in tweet.entities['media']  if media['type'] == 'photo' ]
-            } 
-
-
-            for hashtag in record['hashtags']:
-                if hashtag not in visited_hashtags and hashtag not in irr_hashtags and hashtag not in frontier:
-                    frontier.append( hashtag )
-
-            records.append( record )
-
-        count += len(search_result)
-
-    if count == 0:
-        return records, 1
-    else:
-        return records, len(records) / count
-
-def insert_data( records : list ) -> None:
     client = MongoClient(
         host=os.getenv('HOST'),
         username=os.getenv('USERNAME'),
@@ -83,6 +116,8 @@ def insert_data( records : list ) -> None:
 
     db = client.get_database( os.getenv('AUTHSOURCE') )
     db.get_collection( 'tweets' ).insert_many( records )
+    
+    records.clear()
 
 if __name__ == '__main__':
     apps = load_app()
@@ -90,37 +125,41 @@ if __name__ == '__main__':
     apis = list()
 
     for key in apps:
-        apis.append(auth_app( apps[key]['API_KEY'], apps[key]['API_SECRET_KEY'], apps[key]['ACCESS_TOKEN'], apps[key]['ACCESS_TOKEN_SECRET'] ))
+        apis.append(
+            auth_app( 
+                consumer_key= apps[key]['API_KEY'] , 
+                consumer_secret=apps[key]['API_SECRET_KEY'], 
+                access_token=apps[key]['ACCESS_TOKEN'], 
+                access_token_secret=apps[key]['ACCESS_TOKEN_SECRET'] 
+            )
+        )
 
-    random.shuffle( apis ) 
     apis = cycle( apis )
 
-    frontier = [ 'ReviewThailand', 'unseenthailand', 'amazingthailand', 'TourismAuthorityOfThailand', 'thailand' ]
-    visited_hashtags = set()
-    visited_ids = set()
-    irr_hashtags = set()
+    seed_hashtags = [ 'ReviewThailand', 'unseenthailand', 'amazingthailand', 'TourismAuthorityOfThailand' ]
 
-    records = list()
+    frontier = list(map( build_query, seed_hashtags ))
 
-    while len( frontier ) > 0:
+    operate_hours = 24
+    end_time = time.time() + ( operate_hours * 60 * 60 )
+
+    while len( frontier ) > 0 and time.time() < end_time:
         if len(records) > 1000:
-            insert_data( records )
+            insert_data()
 
-        hashtag = frontier.pop( 0 )
-        api = next(apis)
+        raw_query = frontier.pop( 0 )
+        api = next( apis )
 
-        data, scores = collect_data( api, hashtag, frontier, visited_hashtags, visited_ids, irr_hashtags )
+        collect_data( api, raw_query )
 
-        visited_hashtags = visited_hashtags.union( [ hashtag ] )
-        visited_ids = visited_ids.union( [ record['id'] for record in data ] )
-        
-        if scores < 0.05:
-            irr_hashtags = irr_hashtags.union( hashtag )
+    insert_data()
 
-        records += data
+    with open('rev_hashtags.json','w') as f:
+        json.dump( list(rev_hashtags), f )
 
-    with open( 'visited_ids.json', 'w' ) as f:
+    with open('visited_ids.json','w') as f:
         json.dump( list(visited_ids), f )
 
-    with open('irr_hashtags.json', 'w') as f:
-        json.dump( list( irr_hashtags ), f )
+    with open('frontier.json','w') as f:
+        json.dump( frontier, f )
+
