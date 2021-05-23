@@ -43,7 +43,7 @@ def process_result( hashtag : str, tweets : list, query_metadata : dict ) -> Non
     global records
 
     valid_tweet_count = 0
-    threshold = 0.05
+    threshold = 0.1
 
     visited_hashtags = visited_hashtags.union( [ hashtag ] )
 
