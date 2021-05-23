@@ -99,7 +99,6 @@ def auth_app( consumer_key : str, consumer_secret : str, access_token : str, acc
     )
 
 def collect_data( api : twitter.Api, raw_query : str ):
-    print( raw_query )
     search_result = api.GetSearch( raw_query= raw_query, return_json=True )
     process_result( hashtag= get_hashtag( raw_query ), tweets= search_result['statuses'], query_metadata=search_result['search_metadata'] )
 
