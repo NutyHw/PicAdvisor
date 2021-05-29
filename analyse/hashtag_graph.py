@@ -33,17 +33,19 @@ def create_graph( step : int ) -> nx.Graph:
     for i in range(step):
         edges = set()
 
-        records = db.get_collection( 'tweets' ).find({
+        cursor = db.get_collection( 'tweets' ).find({
             'hashtags' : { '$in' : list(next_hop) }
-        })
+        }, no_cursor_timeout=True)
 
         visited = visited.union( next_hop )
         next_hop.clear()
 
-        for record in records:
+        for record in cursor:
             next_hop = next_hop.union( record['hashtags'] )
             edges = edges.union( product( record['hashtags'], record['hashtags'] ) )
         
+        cursor.close()
+
         next_hop.difference( visited )
 
         G.add_edges_from( list(edges) )
