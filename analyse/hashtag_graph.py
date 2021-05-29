@@ -28,7 +28,7 @@ def create_graph( step : int ) -> nx.Graph:
     next_hop = roots
     visited = set()
 
-    G = nx.graph()
+    G = nx.Graph()
 
     for i in range(step):
         edges = set()
