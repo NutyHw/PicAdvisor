@@ -1,10 +1,9 @@
 import os
-from itertools import product
+import json
 
 from pymongo.database import Database
 from pymongo import MongoClient
 from dotenv import load_dotenv
-import networkx as nx
 
 load_dotenv('../env/mongo_auth.env')
 
@@ -20,7 +19,7 @@ def connect() -> Database:
     db = client.get_database( os.getenv('AUTHSOURCE') )
     return db
 
-def create_graph( step : int ) -> nx.Graph:
+def create_graph( step : int ) -> set:
     roots = { 'ReviewThailand', 'unseenthailand', 'amazingthailand', 'TourismAuthorityOfThailand' }
 
     db = connect()
@@ -28,11 +27,7 @@ def create_graph( step : int ) -> nx.Graph:
     next_hop = roots
     visited = set()
 
-    G = nx.Graph()
-
     for i in range(step):
-        edges = set()
-
         cursor = db.get_collection( 'tweets' ).find({
             'hashtags' : { '$in' : list(next_hop) }
         }, no_cursor_timeout=True)
@@ -42,16 +37,15 @@ def create_graph( step : int ) -> nx.Graph:
 
         for record in cursor:
             next_hop = next_hop.union( record['hashtags'] )
-            edges = edges.union( product( record['hashtags'], record['hashtags'] ) )
         
         cursor.close()
 
         next_hop.difference( visited )
 
-        G.add_edges_from( list(edges) )
-
-    return G
+    return visited
 
 if __name__ == '__main__':
-    G = create_graph( 10 )
-    nx.write_adjlist( G, 'graph.adjlist' )
+    res = create_graph( 10 )
+
+    with open('result.json','w') as f:
+        json.dump( list(res), f )
